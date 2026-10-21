@@ -132,7 +132,11 @@ void stopState(unsigned long currentTime){
     exitTime = currentTime + STOP_RATE;
 
     stop();
+<<<<<<< HEAD
     led.setColor(0, 0, 0);
+=======
+    led.setColor(0, 0, 0, 0);
+>>>>>>> 8f972998b10e626cc2e5996ea09548276be64a44
     led.setColor(255, 0, 0);
     led.show();
   }
