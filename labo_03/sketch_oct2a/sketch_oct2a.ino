@@ -1,3 +1,5 @@
+// N.A: 2249427
+
 #include <MeAuriga.h>
 #include <Wire.h>
 #include <Arduino.h>
@@ -19,16 +21,16 @@ const float WHEEL_PERIMETER = WHEEL_DIAMETER * 3.1416;
 // -- vitesses et réglages
 
 const short SPEED = 100;   
-const short SPEED_APPROCHE = 70;    // vitesse près de l'obstacle (segment B)
+const short SPEED_APPROCHE = 70;    // vitesse pres de l'obstacle (segment B)
 const short SPEED_PIVOT = 65;    
 const short SPEED_PIVOT_FINAL = 37;    
 const int   SLOW_ZONE_CM = 20;    // on ralentit à STOP_DIST_CM + SLOW_ZONE_CM
-const float FREINAGE_CM = 0.0;   // distance d'inertie à anticiper (A et C), à calibrer
+const float FREINAGE_CM = 0.0;   // pour anticiper l'inertie
 const double PIVOT_TOLERANCE = 2.0;   // degrés
-const unsigned long PIVOT_SETTLE_MS = 300;   // pause après un pivot pour stabiliser le gyro
+const unsigned long PIVOT_SETTLE_MS = 300;   // pause apres un pivot pour stabiliser le gyro
 
 const double KP_AC = 25.5, KD_AC = 13.0;   // segments A et C
-const double KP_B  = 9.0,  KD_B  = 18.0;   // segment B
+const double KP_B  = 9.0,  KD_B  = 18.0;   // segment B (mon robot oscille avec le meme kp et kd que celui du segment A et C)
 
 // -- leds
 
@@ -56,10 +58,10 @@ MeUltrasonicSensor ultraSensor(PORT_10);
 
 float ultrasonicDistance = 400;      
 float odoBaseL = 0, odoBaseR = 0;    // position des encodeurs au début d'un segment
-int   progressShown = -1;            // nb de DEL affichées 
+int progressShown = -1;            // nb de DEL affichées 
 double headingGoal = 0.0;            // cap absolu à tenir 
 float distSegB = 0;                  // distance réellement parcourue au segment B (pour le retour)
-int   backStep = 0;                  // étape du retour
+int backStep = 0;                  // étape du retour
 
 enum State {SETUP, ROAD_A, TURN_A, ROAD_B, TURN_B, ROAD_C, TURN_FULL, FINISH, BACK_TRIP, BACK_TURN, END};
 State currentState = SETUP;
@@ -111,10 +113,9 @@ void stopEncoders() {
   encoder_2.setTarPWM(0);
 }
 
-// Distance parcourue (cm) depuis le début du segment (odoBaseL / odoBaseR)
+// Distance parcourue (cm) depuis le début du segment 
 float distanceParcourueCm() {
-  float posMoy = (fabs(encoder_1.getCurPos() - odoBaseL) +
-                  fabs(encoder_2.getCurPos() - odoBaseR)) / 2.0;
+  float posMoy = (fabs(encoder_1.getCurPos() - odoBaseL) + fabs(encoder_2.getCurPos() - odoBaseR)) / 2.0;
   return (posMoy / 360.0) * WHEEL_PERIMETER;
 }
 
@@ -152,7 +153,7 @@ void progressiveLeds(float ratio) {
 // -- déplacement en ligne droite
 
 double normalizeAngle(double a) {
-  while (a > 180.0)   a -= 360.0;
+  while (a > 180.0) a -= 360.0;
   while (a <= -180.0) a += 360.0;
   return a;
 }
@@ -197,13 +198,12 @@ bool spin(double angleDeg, unsigned long currentTime) {
   if (settling) {
     if (currentTime < settleEnd) return false;
 
-    // Robot immobile : on revérifie l'erreur résiduelle (dépassement dû à l'inertie)
-    if (fabs(reste) <= PIVOT_TOLERANCE) {
-      headingGoal = targetHeading;   // la référence est le cap visé, pas le cap mesuré
+    // Robot immobile : on revérifie l'erreur dû à l'inertie
+      headingGoal = targetHeading;   
       started = false;
       return true;
     }
-    settling = false;                // trop d'erreur : on corrige lentement
+    settling = false;       
   }
 
   if (fabs(reste) <= PIVOT_TOLERANCE) {
@@ -223,7 +223,6 @@ bool spin(double angleDeg, unsigned long currentTime) {
   encoder_2.setTarPWM(dir * vit);
   return false;
 }
-
 
 void setupState(unsigned long currentTime) {
   static unsigned long exitTime = 0;
@@ -246,7 +245,7 @@ void setupState(unsigned long currentTime) {
   }
 }
 
-// Segment 1 : ligne droite de X cm
+// Segment 1 : ligne droite 
 void freeTripState(unsigned long currentTime) {
   static bool firstTime = true;
   bool transition = false;
@@ -276,7 +275,7 @@ void freeTripState(unsigned long currentTime) {
   }
 }
 
-// Pivot 90° - DA[6]
+// Pivot 90° - DA[6] impair
 void turnState(unsigned long currentTime) {
   if (spin(ANGLE_PIVOT_1, currentTime)) currentState = ROAD_B;
 }
@@ -325,7 +324,7 @@ void turnOppositeState(unsigned long currentTime) {
   if (spin(ANGLE_PIVOT_2, currentTime)) currentState = ROAD_C;
 }
 
-// Segment 3 : ligne droite de X cm
+// Segment 3 : ligne droite 
 void ledTripState(unsigned long currentTime) {
   static bool firstTime = true;
   bool transition = false;
@@ -360,7 +359,7 @@ void turnFullState(unsigned long currentTime) {
   if (spin(ANGLE_DEMI_TOUR, currentTime)) currentState = FINISH;
 }
 
-// Fin A : DEL 8 à 12 clignotent en vert à 10 Hz, puis (bonus) retour à la base
+// Fin A : DEL 8 à 12 clignotent en vert 
 void finishState(unsigned long currentTime) {
   static bool firstTime = true;
   static unsigned long lastTime = 0;
@@ -417,7 +416,6 @@ void rainbowTask(unsigned long currentTime) {
   led.show();
 }
 
-// Avance en ligne droite de distCm (cap = headingGoal). Retourne true quand la distance est atteinte.
 bool returnTrip(float distCm, double kp, double kd) {
   static bool firstTime = true;
 
@@ -438,7 +436,7 @@ bool returnTrip(float distCm, double kp, double kd) {
   return false;
 }
 
-// Segments du retour : étape 0 (X cm), 2 (distance du segment B) et 4 (X cm)
+// Segments du retour : m'assigne les valeurs associées à chaque trajet
 void backTripState(unsigned long currentTime) {
   bool isB = (backStep == 2);
   float dist = isB ? distSegB : DIST_X_CM;
@@ -447,7 +445,7 @@ void backTripState(unsigned long currentTime) {
 
   if (returnTrip(dist, kp, kd)) {
     if (backStep == 4) {
-      currentState = END;            // dernier segment terminé : retour à la case départ
+      currentState = END;            
     } else {
       backStep++;
       currentState = BACK_TURN;
@@ -455,7 +453,7 @@ void backTripState(unsigned long currentTime) {
   }
 }
 
-// Pivots du retour : étape 1 (même sens que le 1er pivot) et 3 (sens opposé)
+// Pivots du retour 
 void backTurnState(unsigned long currentTime) {
   double angle = (backStep == 1) ? ANGLE_PIVOT_1 : ANGLE_PIVOT_2;
 
@@ -465,7 +463,6 @@ void backTurnState(unsigned long currentTime) {
   }
 }
 
-// Fin B : robot arrêté, DEL éteintes
 void endState() {
   static bool firstTime = true;
 
@@ -478,12 +475,6 @@ void endState() {
 }
 
 void gestState(unsigned long currentTime) {
-  static int lastState = -1;
-  if (currentState != lastState) {          // trace de débogage à chaque changement d'état
-    lastState = currentState;
-    Serial.print("Etat: ");
-    Serial.println(currentState);
-  }
 
   switch (currentState) {
     case SETUP: setupState(currentTime); break;
@@ -516,6 +507,5 @@ void loop() {
   gyro.update();
   gestState(currentTime);
 
-  // Arc-en-ciel animé pendant tout le retour (bonus)
   if (currentState == BACK_TRIP || currentState == BACK_TURN) rainbowTask(currentTime);
 }
