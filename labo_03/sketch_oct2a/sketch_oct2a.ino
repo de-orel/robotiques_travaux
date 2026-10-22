@@ -190,7 +190,7 @@ bool spin(double angleDeg, unsigned long currentTime) {
   if (!started) {
     started = true;
     settling = false;
-    targetHeading = normalizeAngle(headingGoal + angleDeg);   // cap absolu visé
+    targetHeading = normalizeAngle(headingGoal + angleDeg);
   }
 
   double reste = normalizeAngle(targetHeading - gyro.getAngleZ());
@@ -198,12 +198,13 @@ bool spin(double angleDeg, unsigned long currentTime) {
   if (settling) {
     if (currentTime < settleEnd) return false;
 
-    // Robot immobile : on revérifie l'erreur dû à l'inertie
-      headingGoal = targetHeading;   
+    if (fabs(reste) <= PIVOT_TOLERANCE) {
+      headingGoal = targetHeading;
       started = false;
       return true;
     }
-    settling = false;       
+
+    settling = false;
   }
 
   if (fabs(reste) <= PIVOT_TOLERANCE) {
@@ -214,13 +215,14 @@ bool spin(double angleDeg, unsigned long currentTime) {
   }
 
   short dir = (reste > 0) ? 1 : -1;
-  // Ralentit près de la cible pour limiter le dépassement
   short vit = SPEED_PIVOT;
+
   if (fabs(reste) < 30) vit = SPEED_PIVOT / 2;
   if (fabs(reste) < 10) vit = SPEED_PIVOT_FINAL;
 
   encoder_1.setTarPWM(dir * vit);
   encoder_2.setTarPWM(dir * vit);
+
   return false;
 }
 
@@ -280,7 +282,7 @@ void turnState(unsigned long currentTime) {
   if (spin(ANGLE_PIVOT_1, currentTime)) currentState = ROAD_B;
 }
 
-// Segment 2 : avance jusqu'à 30 cm de l'obstacle
+// Segment 2 
 void obstacleTripState(unsigned long currentTime) {
   static bool firstTime = true;
   static float distInit = 0;
