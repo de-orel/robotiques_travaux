@@ -20,15 +20,15 @@ const float WHEEL_PERIMETER = WHEEL_DIAMETER * 3.1416;
 
 const short SPEED = 100;   
 const short SPEED_APPROCHE = 70;    // vitesse près de l'obstacle (segment B)
-const short SPEED_PIVOT = 60;    
-const short SPEED_PIVOT_FINAL = 40;    
+const short SPEED_PIVOT = 65;    
+const short SPEED_PIVOT_FINAL = 37;    
 const int   SLOW_ZONE_CM = 20;    // on ralentit à STOP_DIST_CM + SLOW_ZONE_CM
 const float FREINAGE_CM = 0.0;   // distance d'inertie à anticiper (A et C), à calibrer
 const double PIVOT_TOLERANCE = 2.0;   // degrés
 const unsigned long PIVOT_SETTLE_MS = 300;   // pause après un pivot pour stabiliser le gyro
 
-const double KP_AC = 22.5, KD_AC = 10.0;   // segments A et C
-const double KP_B  = 7.0,  KD_B  = 15.0;   // segment B
+const double KP_AC = 25.5, KD_AC = 13.0;   // segments A et C
+const double KP_B  = 9.0,  KD_B  = 18.0;   // segment B
 
 // -- leds
 
@@ -47,19 +47,19 @@ const unsigned long FIN_A_DUREE_MS = 3000;       // durée du clignotement final
 
 // -- objets
 
-MeEncoderOnBoard encoder_1(SLOT1);   // moteur gauche
-MeEncoderOnBoard encoder_2(SLOT2);   // moteur droit
+MeEncoderOnBoard encoder_1(SLOT1);   
+MeEncoderOnBoard encoder_2(SLOT2);   
 MeRGBLed led(0, LEDNUM);
 MeGyro gyro(0, 0x69);
 MeUltrasonicSensor ultraSensor(PORT_10);
 
 
-float ultrasonicDistance = 400;      // dernière distance valide (cm)
+float ultrasonicDistance = 400;      
 float odoBaseL = 0, odoBaseR = 0;    // position des encodeurs au début d'un segment
-int   progressShown = -1;            // nb de DEL affichées (évite des show() inutiles)
-double headingGoal = 0.0;            // cap ABSOLU à tenir : somme exacte des pivots demandés
+int   progressShown = -1;            // nb de DEL affichées 
+double headingGoal = 0.0;            // cap absolu à tenir 
 float distSegB = 0;                  // distance réellement parcourue au segment B (pour le retour)
-int   backStep = 0;                  // étape du retour : 0 avancer X, 1 pivot 1, 2 avancer segment 3 pivot 2, 4 avancer X (puis END)
+int   backStep = 0;                  // étape du retour
 
 enum State {SETUP, ROAD_A, TURN_A, ROAD_B, TURN_B, ROAD_C, TURN_FULL, FINISH, BACK_TRIP, BACK_TURN, END};
 State currentState = SETUP;
