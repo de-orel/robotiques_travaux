@@ -2,8 +2,8 @@
 #include <Wire.h>
 #include <Arduino.h>
 
-const float DIST_X_CM = 120.0;  
-const int   STOP_DIST_CM = 30;   
+const float DIST_X_CM     = 120.0;  
+const int   STOP_DIST_CM  = 30;   
 
 const int   DA_6 = 7;    
 const bool  PIVOT_DROIT_1 = (DA_6 % 2 == 1);           
@@ -47,21 +47,21 @@ const unsigned long FIN_A_DUREE_MS = 3000;       // durée du clignotement final
 
 // -- objets
 
-MeEncoderOnBoard encoder_1(SLOT1);   
-MeEncoderOnBoard encoder_2(SLOT2);   
+MeEncoderOnBoard encoder_1(SLOT1);   // moteur gauche
+MeEncoderOnBoard encoder_2(SLOT2);   // moteur droit
 MeRGBLed led(0, LEDNUM);
 MeGyro gyro(0, 0x69);
 MeUltrasonicSensor ultraSensor(PORT_10);
 
 
 float ultrasonicDistance = 400;      // dernière distance valide (cm)
-float odoBaseL = 0, odoBaseR = 0;    
-int   progressShown = -1;            
-double headingGoal = 0.0;            
-float distSegB = 0;                  
-int   backStep = 0;                              
+float odoBaseL = 0, odoBaseR = 0;    // position des encodeurs au début d'un segment
+int   progressShown = -1;            // nb de DEL affichées (évite des show() inutiles)
+double headingGoal = 0.0;            // cap ABSOLU à tenir : somme exacte des pivots demandés
+float distSegB = 0;                  // distance réellement parcourue au segment B (pour le retour)
+int   backStep = 0;                  // étape du retour : 0 avancer X, 1 pivot 1, 2 avancer segment 3 pivot 2, 4 avancer X (puis END)
 
-enum State {SETUP, ROAD_A, TURN_A, ROAD_B, TURN_B, ROAD_C, TURN_FULL, FINISH};
+enum State {SETUP, ROAD_A, TURN_A, ROAD_B, TURN_B, ROAD_C, TURN_FULL, FINISH, BACK_TRIP, BACK_TURN, END};
 State currentState = SETUP;
 
 // -- fonctions d'interruption
@@ -144,7 +144,7 @@ void progressiveLeds(float ratio) {
 
   for (int i = 1; i <= PROGRESS_LEDS; i++) {
     if (i <= nbLeds) led.setColor(i, 0, 255, 0);
-    else  led.setColor(i, 0, 0, 0);
+    else led.setColor(i, 0, 0, 0);
   }
   led.show();
 }
@@ -276,7 +276,7 @@ void freeTripState(unsigned long currentTime) {
   }
 }
 
-// Pivot 90° : sens selon DA[6]
+// Pivot 90° - DA[6]
 void turnState(unsigned long currentTime) {
   if (spin(ANGLE_PIVOT_1, currentTime)) currentState = ROAD_B;
 }
@@ -394,6 +394,88 @@ void finishState(unsigned long currentTime) {
   }
 }
 
+// -- bonus: trajet retour
+
+// Arc-en-ciel animé sur les 12 DEL (pendant tout le retour)
+void rainbowTask(unsigned long currentTime) {
+  static unsigned long lastTime = 0;
+  static int offset = 0;
+  const unsigned long RATE = 80;
+
+  if (currentTime - lastTime < RATE) return;
+  lastTime = currentTime;
+  offset = (offset + 12) % 256;
+
+  for (int i = 1; i <= LEDNUM; i++) {
+    int pos = (offset + i * 256 / LEDNUM) % 256;   // position sur la roue des couleurs (0 à 255)
+    int r, g, b;
+    if (pos < 85) { r = pos * 3; g = 255 - pos * 3; b = 0; }
+    else if (pos < 170) { pos -= 85;  r = 255 - pos * 3; g = 0; b = pos * 3; }
+    else { pos -= 170; r = 0; g = pos * 3; b = 255 - pos * 3; }
+    led.setColor(i, r, g, b);
+  }
+  led.show();
+}
+
+// Avance en ligne droite de distCm (cap = headingGoal). Retourne true quand la distance est atteinte.
+bool returnTrip(float distCm, double kp, double kd) {
+  static bool firstTime = true;
+
+  if (firstTime) {
+    firstTime = false;
+    odoBaseL = encoder_1.getCurPos();
+    odoBaseR = encoder_2.getCurPos();
+    goStraight(SPEED, 1, kp, kd);
+  }
+
+  goStraight(SPEED, 0, kp, kd);
+
+  if (distanceParcourueCm() >= distCm - FREINAGE_CM) {
+    stopEncoders();
+    firstTime = true;
+    return true;
+  }
+  return false;
+}
+
+// Segments du retour : étape 0 (X cm), 2 (distance du segment B) et 4 (X cm)
+void backTripState(unsigned long currentTime) {
+  bool isB = (backStep == 2);
+  float dist = isB ? distSegB : DIST_X_CM;
+  double kp = isB ? KP_B : KP_AC;
+  double kd = isB ? KD_B : KD_AC;
+
+  if (returnTrip(dist, kp, kd)) {
+    if (backStep == 4) {
+      currentState = END;            // dernier segment terminé : retour à la case départ
+    } else {
+      backStep++;
+      currentState = BACK_TURN;
+    }
+  }
+}
+
+// Pivots du retour : étape 1 (même sens que le 1er pivot) et 3 (sens opposé)
+void backTurnState(unsigned long currentTime) {
+  double angle = (backStep == 1) ? ANGLE_PIVOT_1 : ANGLE_PIVOT_2;
+
+  if (spin(angle, currentTime)) {
+    backStep++;
+    currentState = BACK_TRIP;
+  }
+}
+
+// Fin B : robot arrêté, DEL éteintes
+void endState() {
+  static bool firstTime = true;
+
+  if (firstTime) {
+    firstTime = false;
+    stopEncoders();
+    led.setColor(0, 0, 0, 0);
+    led.show();
+  }
+}
 
 void gestState(unsigned long currentTime) {
   static int lastState = -1;
@@ -404,18 +486,18 @@ void gestState(unsigned long currentTime) {
   }
 
   switch (currentState) {
-    case SETUP:      setupState(currentTime);        break;
-    case ROAD_A:     freeTripState(currentTime);     break;
-    case TURN_A:     turnState(currentTime);         break;
-    case ROAD_B:     obstacleTripState(currentTime); break;
-    case TURN_B:     turnOppositeState(currentTime); break;
-    case ROAD_C:     ledTripState(currentTime);      break;
-    case TURN_FULL:  turnFullState(currentTime);     break;
-    case FINISH:     finishState(currentTime);       break;
-    case BACK_TRIP:  backTripState(currentTime);     break;
-    case BACK_TURN:  backTurnState(currentTime);     break;
-    case END:        endState();                     break;
-    default:         currentState = FINISH;          break;
+    case SETUP: setupState(currentTime); break;
+    case ROAD_A: freeTripState(currentTime); break;
+    case TURN_A: turnState(currentTime); break;
+    case ROAD_B: obstacleTripState(currentTime); break;
+    case TURN_B: turnOppositeState(currentTime); break;
+    case ROAD_C: ledTripState(currentTime); break;
+    case TURN_FULL: turnFullState(currentTime); break;
+    case FINISH: finishState(currentTime); break;
+    case BACK_TRIP: backTripState(currentTime); break;
+    case BACK_TURN: backTurnState(currentTime); break;
+    case END: endState(); break;
+    default: currentState = FINISH; break;
   }
 }
 
@@ -434,4 +516,6 @@ void loop() {
   gyro.update();
   gestState(currentTime);
 
+  // Arc-en-ciel animé pendant tout le retour (bonus)
+  if (currentState == BACK_TRIP || currentState == BACK_TURN) rainbowTask(currentTime);
 }
