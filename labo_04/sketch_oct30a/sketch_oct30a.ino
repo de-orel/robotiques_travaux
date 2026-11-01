@@ -100,6 +100,114 @@ void suivreLigne(unsigned long currentTime){}
 void commandeInvalide(unsigned long currentTime){}
 void nonCalibree(unsigned long currentTime){}
 
+// -----------------------------------------------
+
+
+void followLine(float adjustment){
+  // for (int i = 0; i < NB_IR; i++) {
+  //   sensorValues[i] = ss.analogRead(i);
+  // }
+
+  // normaliserValeurs(); // Je calcule le seuil de chaque capteur 
+
+  int leftSpeed = moveSpeed + adjustment;
+  int rightSpeed = moveSpeed - adjustment;
+
+  leftSpeed = constrain(leftSpeed, -255, 255);
+  rightSpeed = constrain(rightSpeed, -255, 255);
+
+  encoderLeft.setMotorPwm(leftSpeed);
+  encoderRight.setMotorPwm(-rightSpeed);
+
+  // if (sensorValues[2] < capteurs[2].valeurNormalisee) {
+  //   Forward();
+  // } else if (sensorValues[0] < capteurs[0].valeurNormalisee || sensorValues[1] < capteurs[1].valeurNormalisee) {
+  //   TurnLeft();
+  // } else if (sensorValues[3] < capteurs[3].valeurNormalisee|| sensorValues[4] < capteurs[4].valeurNormalisee) {
+  //   TurnRight();
+  // } else {
+  //   stopMotors();
+  // }
+}
+void calibrer(){
+
+  for (int i = 0; i < NB_IR; i++){
+    capteurs[i].valeurLue = ss.analogRead(i);
+    if (capteurs[i].valeurLue < capteurs[i].valeurMin){
+      capteurs[i].valeurMin = capteurs[i].valeurLue;
+    }
+    if (capteurs[i].valeurLue > capteurs[i].valeurMax){
+      capteurs[i].valeurMax = capteurs[i].valeurLue;
+    }
+  }
+}
+bool faireTourComplet(){
+  unsigned long currentTime = millis();
+  static bool initialise = true;
+  if(initialise){
+    pivotTask(currentTime, 360, 55, 1);    // je capture l'angle de départ avec init
+    initialise = false;
+  }
+
+  return pivotTask(currentTime, 360, 55, 0); // je fais tourner le robot
+}
+void calibrationAutomatique(){
+  Serial.println("Dans calibrattion automatique");
+  while(!faireTourComplet()){
+    gyroTask();
+    encodersTask();
+    calibrer();
+  }
+}
+float capteurLectureNormalisee(int index){
+  return ((capteurs[index].valeurLue - capteurs[index].valeurMin) * 1.0) / (capteurs[index].valeurMax - capteurs[index].valeurMin) * 1000.0;
+}
+float calculerPositionLigne(){
+  float numerateur = 0;
+  float denominateur = 0;
+
+  for(int i = 0; i < NB_IR; i++){
+    float v = 1000 - capteurs[i].valeurNormalisee;   // noir = grand poids
+    numerateur += v * (i - 2);
+    denominateur += v;
+  }
+
+  if (denominateur < 100) return 0;   // ligne perdue
+  return numerateur / (float)denominateur * 1000;   // environ ±2000
+}
+float computePID(float position, float consigne = 0.0f) {
+    // Ajuster les coefficients selon vos besoins
+    static float kp = 0.1; // Coefficient proportionnel
+    static float ki = 0.01; // Coefficient intégral
+    static float kd = 0.01; // Coefficient dérivé
+
+    static float integral = 0;
+    static float derivative = 0;
+    static float lastError = 0;
+
+    float error = position - consigne;
+
+    integral += error;
+
+    // Adapter cette valeur selon les besoins de votre application
+    const float integralLimit = 1000;
+
+    // Limiter l'intégrale pour éviter l'emballement intégral
+    integral = constrain(integral, -integralLimit, integralLimit);
+
+    derivative = error - lastError;
+    lastError = error;
+
+    float output = kp * error + ki * integral + kd * derivative;
+
+    return output;
+}
+void normaliserValeurs(){
+  for(int i = 0; i < 5; i++){
+    capteurs[i].valeurNormalisee = capteurLectureNormalisee(i);
+  }
+}
+
 void gestStateLineDetector(unsigned long currentTime) {
 
   switch (currentState) {
@@ -556,7 +664,7 @@ void loop() {
 
   encodersTask();
   gyro.update();
-  gestState(currentTime);
+  gestStateLineDetector(currentTime);
 
   if (currentState == BACK_TRIP || currentState == BACK_TURN) rainbowTask(currentTime);
 }
