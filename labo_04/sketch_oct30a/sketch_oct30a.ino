@@ -66,8 +66,57 @@ int backStep = 0;                  // étape du retour
 enum State {SETUP, ROAD_A, TURN_A, ROAD_B, TURN_B, ROAD_C, TURN_FULL, FINISH, BACK_TRIP, BACK_TURN, END};
 State currentState = SETUP;
 
-// -- fonctions d'interruption
+enum State2 {BOOT, ATTENTE, LAB3, CALIB, SUIVRE_LIGNE, CMD_INVALIDE, NON_CALIB};
+State2 currentState2 = BOOT;
 
+
+// ------------------------------------------- labo 4 -------------------------------------
+
+void boot(unsigned long currentTime) {
+  static unsigned long exitTime = 0;
+  static bool firstTime = true;
+  const unsigned long WAIT = 3000;
+  bool transition = false;
+
+  if (firstTime) {
+    firstTime = false;
+    exitTime = currentTime + WAIT_MS;
+
+    Serial.println("BOOT: attente 3 s");
+  }
+
+  transition = (currentTime >= exitTime);
+  if (transition) {
+    firstTime = true;
+    currentState = ATTENTE;
+  }
+}
+void attente(unsigned long currentTime){}
+void lab3(unsigned long currentTime){
+  gestState(currentTime);
+}
+void calibrer(unsigned long currentTime){}
+void suivreLigne(unsigned long currentTime){}
+void commandeInvalide(unsigned long currentTime){}
+void nonCalibree(unsigned long currentTime){}
+
+void gestStateLineDetector(unsigned long currentTime) {
+
+  switch (currentState) {
+    case BOOT: boot(currentTime); break;
+    case ATTENTE: attente(currentTime); break;
+    case LAB3: lab3(currentTime); break;
+    case CALIB: calibrer(currentTime); break;
+    case SUIVRE_LIGNE: suivreLigne(currentTime); break;
+    case CMD_INVALIDE: commandeInvalide(currentTime); break;
+    case NON_CALIB: nonCalibree(currentTime); break;
+    default: currentState = FINISH; break;
+  }
+}
+
+// ------------------------------------------- labo 3 -------------------------------------
+
+// -- fonctions d'interruption
 void isr_process_encoder1(void)
 {
   if (digitalRead(encoder_1.getPortB()) == 0) encoder_1.pulsePosMinus();
