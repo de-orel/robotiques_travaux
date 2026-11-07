@@ -3,6 +3,7 @@
 #include <MeAuriga.h>
 #include <Wire.h>
 #include <Arduino.h>
+#include <Adafruit_seesaw.h>
 
 const float DIST_X_CM     = 120.0;  
 const int   STOP_DIST_CM  = 30;   
@@ -66,43 +67,94 @@ int backStep = 0;                  // étape du retour
 enum State {SETUP, ROAD_A, TURN_A, ROAD_B, TURN_B, ROAD_C, TURN_FULL, FINISH, BACK_TRIP, BACK_TURN, END};
 State currentState = SETUP;
 
+// ------------------------------------------- labo 4 -------------------------------------
+
+// capteur de ligne
+#define NB_IR 5
+
+const int MIN_PWM = 35;
+const int ANGLE_CALIBRATION = 180; // on va le faire 2 fois car mon normalizeAngle ramène 360 à 0.
+
+int valMin = 1023;
+int valMax = 0;
+bool isCalibrated = false;
+
+Adafruit_seesaw ss;
+int sensorValues[NB_IR];  // Tableau pour stocker les valeurs des capteurs
+
+int moveSpeed = 60;
+
+struct Capteur{
+  int valeurMin = 1023;
+  int valeurMax = 0;
+  int valeurLue;
+  int valeurNormalisee;
+};
+
+Capteur capteurs[NB_IR];
+
 enum State2 {BOOT, ATTENTE, LAB3, CALIB, SUIVRE_LIGNE, CMD_INVALIDE, NON_CALIB};
 State2 currentState2 = BOOT;
 
 
-// ------------------------------------------- labo 4 -------------------------------------
+String serialMessage = "";
+bool messageRecu = false;
 
-void boot(unsigned long currentTime) {
-  static unsigned long exitTime = 0;
+void serialEvent() {
+  if (!Serial.available()) return;
+
+  serialMessage = Serial.readStringUntil('\n');
+  serialMessage.trim();
+  messageRecu = true;
+}
+
+void waitCommandTask() {
   static bool firstTime = true;
-  const unsigned long WAIT = 3000;
-  bool transition = false;
 
   if (firstTime) {
     firstTime = false;
-    exitTime = currentTime + WAIT_MS;
-
-    Serial.println("BOOT: attente 3 s");
+    stopMotors();
+    Serial.println("En attente d'une commande..");
   }
 
-  transition = (currentTime >= exitTime);
-  if (transition) {
+  if (!messageRecu) return;    
+  messageRecu = false;
+
+  if (serialMessage == "stop") {
     firstTime = true;
-    currentState = ATTENTE;
+    currentState2 = ATTENTE;
+  } else if (serialMessage == "lab3") {
+    firstTime = true;
+    currentState2 = LAB3;
+  } else if (serialMessage == "cal") {
+    firstTime = true;
+    currentState2 = CALIB;
+  } else if (serialMessage == "ligne") {
+    firstTime = true;
+    currentState2 = SUIVRE_LIGNE;
+  } else {
+    Serial.println("Commande inconnue");
+    currentState2 = ATTENTE;
   }
 }
-void attente(unsigned long currentTime){}
-void lab3(unsigned long currentTime){
-  gestState(currentTime);
-}
-void calibrer(unsigned long currentTime){}
-void suivreLigne(unsigned long currentTime){}
-void commandeInvalide(unsigned long currentTime){}
-void nonCalibree(unsigned long currentTime){}
-
 // -----------------------------------------------
 
 
+void printSensorsValue(unsigned long currentTime){
+  static unsigned long lastTime = 0;
+  const int DELAY_PRINT = 100;
+
+  if(currentTime - lastTime >= DELAY_PRINT){
+    for (int i = 0; i < NB_IR; i++) {
+      sensorValues[i] = ss.analogRead(i);
+      Serial.print("IR"); Serial.print(i); Serial.print(":");
+      Serial.print(sensorValues[i]);
+      Serial.print("\t");
+    }
+    lastTime = currentTime;
+    Serial.println();
+  }
+}
 void followLine(float adjustment){
   // for (int i = 0; i < NB_IR; i++) {
   //   sensorValues[i] = ss.analogRead(i);
@@ -116,18 +168,8 @@ void followLine(float adjustment){
   leftSpeed = constrain(leftSpeed, -255, 255);
   rightSpeed = constrain(rightSpeed, -255, 255);
 
-  encoderLeft.setMotorPwm(leftSpeed);
-  encoderRight.setMotorPwm(-rightSpeed);
-
-  // if (sensorValues[2] < capteurs[2].valeurNormalisee) {
-  //   Forward();
-  // } else if (sensorValues[0] < capteurs[0].valeurNormalisee || sensorValues[1] < capteurs[1].valeurNormalisee) {
-  //   TurnLeft();
-  // } else if (sensorValues[3] < capteurs[3].valeurNormalisee|| sensorValues[4] < capteurs[4].valeurNormalisee) {
-  //   TurnRight();
-  // } else {
-  //   stopMotors();
-  // }
+  encoder_1.setTarPWM(leftSpeed);
+  encoder_2.setTarPWM(-rightSpeed);
 }
 void calibrer(){
 
@@ -141,24 +183,16 @@ void calibrer(){
     }
   }
 }
-bool faireTourComplet(){
-  unsigned long currentTime = millis();
-  static bool initialise = true;
-  if(initialise){
-    pivotTask(currentTime, 360, 55, 1);    // je capture l'angle de départ avec init
-    initialise = false;
-  }
+// bool faireTourComplet(){
+//   unsigned long currentTime = millis();
+//   static bool initialise = true;
+//   if(initialise){
+//     pivotTask(currentTime, 360, 55, 1);    // je capture l'angle de départ avec init
+//     initialise = false;
+//   }
 
-  return pivotTask(currentTime, 360, 55, 0); // je fais tourner le robot
-}
-void calibrationAutomatique(){
-  Serial.println("Dans calibrattion automatique");
-  while(!faireTourComplet()){
-    gyroTask();
-    encodersTask();
-    calibrer();
-  }
-}
+//   return pivotTask(currentTime, 360, 55, 0); // je fais tourner le robot
+// }
 float capteurLectureNormalisee(int index){
   return ((capteurs[index].valeurLue - capteurs[index].valeurMin) * 1.0) / (capteurs[index].valeurMax - capteurs[index].valeurMin) * 1000.0;
 }
@@ -208,17 +242,149 @@ void normaliserValeurs(){
   }
 }
 
+void bootTask(unsigned long currentTime) {
+  static unsigned long exitTime = 0;
+  static bool firstTime = true;
+  const unsigned long WAIT = 3000;
+  bool transition = false;
+
+  if (firstTime) {
+    firstTime = false;
+    exitTime = currentTime + WAIT;
+
+    Serial.println("BOOT: attente 3 s");
+  }
+
+  transition = (currentTime >= exitTime);
+  if (transition) {
+    firstTime = true;
+    currentState2 = ATTENTE;
+  }
+}
+void waitCommandTask(unsigned long currentTime){}
+void lab3Task(unsigned long currentTime){
+  gestState(currentTime);
+}
+void calibrationTask(){
+  Serial.println("Dans calibrattion automatique");
+
+  gyro.update();
+  headingGoal = gyro.getAngleZ();
+
+  for(int i = 0; i < 2; i++){
+    while(!spin(ANGLE_CALIBRATION, millis())){
+      gyro.update();
+      encodersTask();
+      calibrer();
+    }
+  }
+  isCalibrated = true;   // les capteurs sont calibrés
+}
+void followLineTask(){
+
+  if(isCalibrated){
+    for (int i = 0; i < NB_IR; i++) {
+      capteurs[i].valeurLue = ss.analogRead(i);
+    }
+
+    normaliserValeurs(); // Je calcule le seuil de chaque capteur 
+
+    float position = calculerPositionLigne();
+    float adjustment = computePID(position, 0.0f);
+
+    followLine(adjustment);
+  }
+  else{
+    currentState2 = NON_CALIB;
+  }
+}
+void InvalidCommandTask(unsigned long currentTime){
+  const int BLINK_RATE = 250;
+  const int DELAY = 3000;
+  static unsigned long exitTime = 0;
+
+  static unsigned long lastTimeBlink = 0;
+  static bool isOn = false;
+  static bool first = true;
+
+  if(first){
+    exitTime = currentTime + DELAY;
+    lastTimeBlink = currentTime;
+    first = false;
+  }
+  
+  if(currentTime - lastTimeBlink >= BLINK_RATE){
+    isOn = !isOn;
+    if(isOn){
+      led.setColor(0, 0, 0);
+    }
+    else{
+      led.setColor(0, 255, 0, 0);
+    }
+
+    led.show();
+    lastTimeBlink = currentTime;
+  }
+
+  bool transition = (currentTime >= exitTime);
+
+  if(transition){
+    led.setColor(0, 0, 0);
+    led.show();
+    first = true;
+    currentState2 = ATTENTE;
+  } 
+
+}
+void notCalibratedTask(unsigned long currentTime){
+  const int BLINK_RATE = 250;
+  const int DELAY = 3000;
+  static unsigned long exitTime = 0;
+
+  static unsigned long lastTimeBlink = 0;
+  static bool isOn = false;
+  static bool first = true;
+
+  if(first){
+    exitTime = currentTime + DELAY;
+    lastTimeBlink = currentTime;
+    first = false;
+  }
+  
+  if(currentTime - lastTimeBlink >= BLINK_RATE){
+    isOn = !isOn;
+    if(isOn){
+      led.setColor(0, 0, 0);
+    }
+    else{
+      led.setColor(0, 255, 255, 0);
+    }
+
+    led.show();
+    lastTimeBlink = currentTime;
+  }
+
+  bool transition = (currentTime >= exitTime);
+
+  if(transition){
+    led.setColor(0, 0, 0);
+    led.show();
+    first = true;
+    currentState2 = ATTENTE;
+  } 
+}
+
 void gestStateLineDetector(unsigned long currentTime) {
 
-  switch (currentState) {
-    case BOOT: boot(currentTime); break;
-    case ATTENTE: attente(currentTime); break;
-    case LAB3: lab3(currentTime); break;
-    case CALIB: calibrer(currentTime); break;
-    case SUIVRE_LIGNE: suivreLigne(currentTime); break;
-    case CMD_INVALIDE: commandeInvalide(currentTime); break;
-    case NON_CALIB: nonCalibree(currentTime); break;
-    default: currentState = FINISH; break;
+  switch (currentState2) {
+    case BOOT: bootTask(currentTime); break;
+    case ATTENTE: waitCommandTask(currentTime); break;
+    case LAB3: lab3Task(currentTime); break;
+    case CALIB: calibrationTask(); break;
+    case SUIVRE_LIGNE: followLineTask(); break;
+    case CMD_INVALIDE: InvalidCommandTask(currentTime); break;
+    case NON_CALIB: notCalibratedTask(currentTime); break;
+    default: currentState2 = ATTENTE; break;
   }
 }
 
@@ -657,6 +823,12 @@ void setup() {
   encoderConfig();
   led.setpin(LEDPIN);
   gyro.begin();
+
+  if (!ss.begin()) {
+    Serial.println("Erreur de connexion au LyneTracker");
+    while (1);
+  }
+  Serial.println("Connexion réussie au LyneTracker!");
 }
 
 void loop() {
