@@ -77,6 +77,10 @@ const int ANGLE_CALIBRATION = 180; // on va le faire 2 fois car mon normalizeAng
 
 int valMin = 1023;
 int valMax = 0;
+
+float integral = 0;
+float lastError = 0;
+
 bool isCalibrated = false;
 
 Adafruit_seesaw ss;
@@ -93,7 +97,7 @@ struct Capteur{
 
 Capteur capteurs[NB_IR];
 
-enum State2 {BOOT, ATTENTE, LAB3, CALIB, SUIVRE_LIGNE, CMD_INVALIDE, NON_CALIB};
+enum State2 {BOOT, ATTENTE, LAB3, CALIB, SUIVRE_LIGNE, CMD_INVALIDE, NON_CALIB, DEMI_TOUR};
 State2 currentState2 = BOOT;
 
 
@@ -113,7 +117,7 @@ void waitCommandTask() {
 
   if (firstTime) {
     firstTime = false;
-    stopMotors();
+    stopEncoders();
     Serial.println("En attente d'une commande..");
   }
 
@@ -121,20 +125,40 @@ void waitCommandTask() {
   messageRecu = false;
 
   if (serialMessage == "stop") {
+    Serial.print("cmd recu:");
+    Serial.println(serialMessage);
+
     firstTime = true;
     currentState2 = ATTENTE;
+
   } else if (serialMessage == "lab3") {
+
+    Serial.print("cmd recu:");
+    Serial.println(serialMessage);
+
     firstTime = true;
     currentState2 = LAB3;
+
   } else if (serialMessage == "cal") {
+
+    Serial.print("cmd recu:");
+    Serial.println(serialMessage);
+
     firstTime = true;
     currentState2 = CALIB;
+
   } else if (serialMessage == "ligne") {
+
+    Serial.print("cmd recu:");
+    Serial.println(serialMessage);
+
     firstTime = true;
     currentState2 = SUIVRE_LIGNE;
+
   } else {
-    Serial.println("Commande inconnue");
-    currentState2 = ATTENTE;
+    Serial.println("cmd INCONNUE");
+    firstTime = true;
+    currentState2 = CMD_INVALIDE;
   }
 }
 // -----------------------------------------------
@@ -154,6 +178,12 @@ void printSensorsValue(unsigned long currentTime){
     lastTime = currentTime;
     Serial.println();
   }
+}
+bool ligneVisible(){
+  int somme = 0;
+  for(int i = 0; i < NB_IR; i++) somme += 1000 - capteurs[i].valeurNormalisee;
+
+  return somme >= 100; 
 }
 void followLine(float adjustment){
   // for (int i = 0; i < NB_IR; i++) {
@@ -209,15 +239,14 @@ float calculerPositionLigne(){
   if (denominateur < 100) return 0;   // ligne perdue
   return numerateur / (float)denominateur * 1000;   // environ ±2000
 }
+void resetPID(){integral = 0.0; lastError = 0.0;}  // on réinitialise l'integrale et l'erreur précédante accumulées
 float computePID(float position, float consigne = 0.0f) {
     // Ajuster les coefficients selon vos besoins
     static float kp = 0.1; // Coefficient proportionnel
     static float ki = 0.01; // Coefficient intégral
     static float kd = 0.01; // Coefficient dérivé
 
-    static float integral = 0;
     static float derivative = 0;
-    static float lastError = 0;
 
     float error = position - consigne;
 
@@ -261,9 +290,13 @@ void bootTask(unsigned long currentTime) {
     currentState2 = ATTENTE;
   }
 }
-void waitCommandTask(unsigned long currentTime){}
+
 void lab3Task(unsigned long currentTime){
   gestState(currentTime);
+  if (currentState == END) {
+    currentState = SETUP;
+    currentState2 = ATTENTE;
+  }
 }
 void calibrationTask(){
   Serial.println("Dans calibrattion automatique");
@@ -279,9 +312,37 @@ void calibrationTask(){
     }
   }
   isCalibrated = true;   // les capteurs sont calibrés
+  currentState2 = ATTENTE;
 }
-void followLineTask(){
+void demiTourTask(unsigned long currentTime){  // lorsqu'on perd la ligne
+  static bool firstTime = true;
 
+  if(firstTime){
+    firstTime = false;
+    headingGoal = gyro.getAngleZ();
+  }
+
+  if(spin(180, currentTime)){
+    firstTime = true;
+
+    currentState2 = SUIVRE_LIGNE;
+  }
+
+}
+void followLineTask(unsigned long currentTime){
+
+  static unsigned long lostBegining = 0;
+  static bool lost = false;
+  static unsigned long lastTime = 0;
+  const int DELAY_LOST = 150;  
+
+  if (messageRecu && serialMessage == "stop") {
+    messageRecu = false;
+    stopEncoders();
+    currentState2 = ATTENTE;
+    return;
+  }
+  
   if(isCalibrated){
     for (int i = 0; i < NB_IR; i++) {
       capteurs[i].valeurLue = ss.analogRead(i);
@@ -289,10 +350,22 @@ void followLineTask(){
 
     normaliserValeurs(); // Je calcule le seuil de chaque capteur 
 
-    float position = calculerPositionLigne();
-    float adjustment = computePID(position, 0.0f);
+    if(!ligneVisible()){
+      if(!lost){lost = true; lostBegining = currentTime;}
 
-    followLine(adjustment);
+      if(currentTime - lastTime >= DELAY_LOST){
+        lost = false;
+        stopEncoders();
+        currentState2 = DEMI_TOUR;
+      }
+    }
+    else{
+      lost = false;
+      float position = calculerPositionLigne();
+      float adjustment = computePID(position, 0.0f);
+
+      followLine(adjustment);
+    }
   }
   else{
     currentState2 = NON_CALIB;
@@ -378,12 +451,13 @@ void gestStateLineDetector(unsigned long currentTime) {
 
   switch (currentState2) {
     case BOOT: bootTask(currentTime); break;
-    case ATTENTE: waitCommandTask(currentTime); break;
+    case ATTENTE: waitCommandTask(); break;
     case LAB3: lab3Task(currentTime); break;
     case CALIB: calibrationTask(); break;
-    case SUIVRE_LIGNE: followLineTask(); break;
+    case SUIVRE_LIGNE: followLineTask(currentTime); break;
     case CMD_INVALIDE: InvalidCommandTask(currentTime); break;
     case NON_CALIB: notCalibratedTask(currentTime); break;
+    case DEMI_TOUR: demiTourTask(currentTime); break;
     default: currentState2 = ATTENTE; break;
   }
 }
