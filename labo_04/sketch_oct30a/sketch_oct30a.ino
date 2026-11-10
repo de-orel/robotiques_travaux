@@ -73,7 +73,7 @@ State currentState = SETUP;
 #define NB_IR 5
 
 const int MIN_PWM = 35;
-const int ANGLE_CALIBRATION = 180; // on va le faire 2 fois car mon normalizeAngle ramène 360 à 0.
+const int ANGLE_CALIBRATION = 360; // on va le faire 2 fois car mon normalizeAngle ramène 360 à 0.
 
 int valMin = 1023;
 int valMax = 0;
@@ -86,7 +86,7 @@ bool isCalibrated = false;
 Adafruit_seesaw ss;
 int sensorValues[NB_IR];  // Tableau pour stocker les valeurs des capteurs
 
-int moveSpeed = 60;
+int moveSpeed = 50;
 
 struct Capteur{
   int valeurMin = 1023;
@@ -198,8 +198,8 @@ void followLine(float adjustment){
   leftSpeed = constrain(leftSpeed, -255, 255);
   rightSpeed = constrain(rightSpeed, -255, 255);
 
-  encoder_1.setTarPWM(leftSpeed);
-  encoder_2.setTarPWM(-rightSpeed);
+  encoder_1.setTarPWM(-rightSpeed);
+  encoder_2.setTarPWM(leftSpeed);
 }
 void calibrer(){
 
@@ -242,9 +242,9 @@ float calculerPositionLigne(){
 void resetPID(){integral = 0.0; lastError = 0.0;}  // on réinitialise l'integrale et l'erreur précédante accumulées
 float computePID(float position, float consigne = 0.0f) {
     // Ajuster les coefficients selon vos besoins
-    static float kp = 0.1; // Coefficient proportionnel
-    static float ki = 0.01; // Coefficient intégral
-    static float kd = 0.01; // Coefficient dérivé
+    static float kp = 0.05; // Coefficient proportionnel
+    static float ki = 0.00; // Coefficient intégral
+    static float kd = 0.04; // Coefficient dérivé
 
     static float derivative = 0;
 
@@ -253,7 +253,7 @@ float computePID(float position, float consigne = 0.0f) {
     integral += error;
 
     // Adapter cette valeur selon les besoins de votre application
-    const float integralLimit = 1000;
+    const float integralLimit = 500;
 
     // Limiter l'intégrale pour éviter l'emballement intégral
     integral = constrain(integral, -integralLimit, integralLimit);
@@ -304,13 +304,12 @@ void calibrationTask(){
   gyro.update();
   headingGoal = gyro.getAngleZ();
 
-  for(int i = 0; i < 2; i++){
-    while(!spin(ANGLE_CALIBRATION, millis())){
-      gyro.update();
-      encodersTask();
-      calibrer();
-    }
+  while(!spin(ANGLE_CALIBRATION, millis())){
+    gyro.update();
+    encodersTask();
+    calibrer();
   }
+  
   isCalibrated = true;   // les capteurs sont calibrés
   currentState2 = ATTENTE;
 }
@@ -324,7 +323,7 @@ void demiTourTask(unsigned long currentTime){  // lorsqu'on perd la ligne
 
   if(spin(180, currentTime)){
     firstTime = true;
-
+    resetPID();
     currentState2 = SUIVRE_LIGNE;
   }
 
@@ -333,15 +332,7 @@ void followLineTask(unsigned long currentTime){
 
   static unsigned long lostBegining = 0;
   static bool lost = false;
-  static unsigned long lastTime = 0;
   const int DELAY_LOST = 150;  
-
-  if (messageRecu && serialMessage == "stop") {
-    messageRecu = false;
-    stopEncoders();
-    currentState2 = ATTENTE;
-    return;
-  }
   
   if(isCalibrated){
     for (int i = 0; i < NB_IR; i++) {
@@ -353,7 +344,7 @@ void followLineTask(unsigned long currentTime){
     if(!ligneVisible()){
       if(!lost){lost = true; lostBegining = currentTime;}
 
-      if(currentTime - lastTime >= DELAY_LOST){
+      if(currentTime - lostBegining >= DELAY_LOST){
         lost = false;
         stopEncoders();
         currentState2 = DEMI_TOUR;
@@ -448,6 +439,18 @@ void notCalibratedTask(unsigned long currentTime){
 }
 
 void gestStateLineDetector(unsigned long currentTime) {
+
+  if (messageRecu && serialMessage == "stop"&& currentState2 != ATTENTE && currentState2 != BOOT) {
+    messageRecu = false;
+    stopEncoders();
+    eteindreLeds();
+
+    currentState = SETUP;       // Réinitialise la machine à états du Lab 3 si elle était active
+    currentState2 = ATTENTE;    // Retourne à l'état d'attente
+    Serial.print("cmd recu:");
+    Serial.println(serialMessage);
+    return;
+  }
 
   switch (currentState2) {
     case BOOT: bootTask(currentTime); break;
@@ -581,22 +584,33 @@ void goStraight(short speed, short firstRun, double kp, double kd) {
 bool spin(double angleDeg, unsigned long currentTime) {
   static bool started = false;
   static bool settling = false;
-  static double targetHeading = 0.0;
+  static double lastAngle = 0;
+  static double currentRotation = 0;
   static unsigned long settleEnd = 0;
 
   if (!started) {
     started = true;
     settling = false;
-    targetHeading = normalizeAngle(headingGoal + angleDeg);
+    lastAngle = gyro.getAngleZ();
+    currentRotation = 0;
   }
 
-  double reste = normalizeAngle(targetHeading - gyro.getAngleZ());
+  // Calcul de la rotation effectuée
+  double currentAngle = gyro.getAngleZ();
+  double delta = normalizeAngle(currentAngle - lastAngle);
 
+  currentRotation += delta;
+  lastAngle = currentAngle;
+
+  // Calcul de l'erreur
+  double reste = angleDeg - currentRotation;
+
+  // Vérification après l'arrêt
   if (settling) {
     if (currentTime < settleEnd) return false;
 
     if (fabs(reste) <= PIVOT_TOLERANCE) {
-      headingGoal = targetHeading;
+      headingGoal = gyro.getAngleZ();
       started = false;
       return true;
     }
@@ -604,6 +618,7 @@ bool spin(double angleDeg, unsigned long currentTime) {
     settling = false;
   }
 
+  // Arrêt lorsque le robot est proche de la cible
   if (fabs(reste) <= PIVOT_TOLERANCE) {
     stopEncoders();
     settling = true;
@@ -611,7 +626,9 @@ bool spin(double angleDeg, unsigned long currentTime) {
     return false;
   }
 
+  // Le signe de reste détermine le sens de correction
   short dir = (reste > 0) ? 1 : -1;
+
   short vit = SPEED_PIVOT;
 
   if (fabs(reste) < 30) vit = SPEED_PIVOT / 2;
@@ -844,6 +861,7 @@ void backTripState(unsigned long currentTime) {
 
   if (returnTrip(dist, kp, kd)) {
     if (backStep == 4) {
+      eteindreLeds();
       currentState = END;            
     } else {
       backStep++;
@@ -863,14 +881,16 @@ void backTurnState(unsigned long currentTime) {
 }
 
 void endState() {
-  static bool firstTime = true;
-
-  if (firstTime) {
-    firstTime = false;
-    stopEncoders();
-    led.setColor(0, 0, 0, 0);
-    led.show();
+  stopEncoders();
+  eteindreLeds();
+}
+void eteindreLeds(){
+  for(int i = 1; i <= LEDNUM; i++){
+    led.setColor(i, 0, 0, 0);
   }
+
+  led.setColor(0, 0, 0, 0);
+  led.show();
 }
 
 void gestState(unsigned long currentTime) {
