@@ -23,15 +23,15 @@ const float WHEEL_PERIMETER = WHEEL_DIAMETER * 3.1416;
 
 const short SPEED = 100;   
 const short SPEED_APPROCHE = 70;    // vitesse pres de l'obstacle (segment B)
-const short SPEED_PIVOT = 65;    
+const short SPEED_PIVOT = 50;    
 const short SPEED_PIVOT_FINAL = 37;    
 const int   SLOW_ZONE_CM = 20;    // on ralentit à STOP_DIST_CM + SLOW_ZONE_CM
 const float FREINAGE_CM = 0.0;   // pour anticiper l'inertie
 const double PIVOT_TOLERANCE = 2.0;   // degrés
 const unsigned long PIVOT_SETTLE_MS = 300;   // pause apres un pivot pour stabiliser le gyro
 
-const double KP_AC = 25.5, KD_AC = 13.0;   // segments A et C
-const double KP_B  = 9.0,  KD_B  = 18.0;   // segment B (mon robot oscille avec le meme kp et kd que celui du segment A et C)
+const double KP_AC = 6.0, KD_AC = 25.0;   // segments A et C
+const double KP_B  = 6.0,  KD_B  = 25.0;   // segment B (mon robot oscille avec le meme kp et kd que celui du segment A et C)
 
 // -- leds
 
@@ -81,12 +81,13 @@ int valMax = 0;
 float integral = 0;
 float lastError = 0;
 
+double capCentre = 0;
 bool isCalibrated = false;
 
 Adafruit_seesaw ss;
 int sensorValues[NB_IR];  // Tableau pour stocker les valeurs des capteurs
 
-int moveSpeed = 50;
+int moveSpeed = 75;
 
 struct Capteur{
   int valeurMin = 1023;
@@ -151,6 +152,10 @@ void waitCommandTask() {
 
     Serial.print("cmd recu:");
     Serial.println(serialMessage);
+
+    gyro.update();
+    capCentre = gyro.getAngleZ();
+    resetPID();
 
     firstTime = true;
     currentState2 = SUIVRE_LIGNE;
@@ -243,8 +248,8 @@ void resetPID(){integral = 0.0; lastError = 0.0;}  // on réinitialise l'integra
 float computePID(float position, float consigne = 0.0f) {
     // Ajuster les coefficients selon vos besoins
     static float kp = 0.05; // Coefficient proportionnel
-    static float ki = 0.00; // Coefficient intégral
-    static float kd = 0.04; // Coefficient dérivé
+    static float ki = 0.0; // Coefficient intégral
+    static float kd = 1; // Coefficient dérivé
 
     static float derivative = 0;
 
@@ -299,7 +304,6 @@ void lab3Task(unsigned long currentTime){
   }
 }
 void calibrationTask(){
-  Serial.println("Dans calibrattion automatique");
 
   gyro.update();
   headingGoal = gyro.getAngleZ();
@@ -315,14 +319,18 @@ void calibrationTask(){
 }
 void demiTourTask(unsigned long currentTime){  // lorsqu'on perd la ligne
   static bool firstTime = true;
+  static double angleAFaire = 180.0;
 
   if(firstTime){
     firstTime = false;
-    headingGoal = gyro.getAngleZ();
+    double dejaTourne = normalizeAngle(gyro.getAngleZ() - capCentre);
+    angleAFaire = 180.0 - dejaTourne;
+    //headingGoal = gyro.getAngleZ();
   }
 
   if(spin(180, currentTime)){
     firstTime = true;
+    capCentre = gyro.getAngleZ();
     resetPID();
     currentState2 = SUIVRE_LIGNE;
   }
@@ -330,9 +338,9 @@ void demiTourTask(unsigned long currentTime){  // lorsqu'on perd la ligne
 }
 void followLineTask(unsigned long currentTime){
 
-  static unsigned long lostBegining = 0;
-  static bool lost = false;
-  const int DELAY_LOST = 150;  
+  //static unsigned long lostBegining = 0;
+  //static bool lost = false;
+  //const int DELAY_LOST = 150;  
   
   if(isCalibrated){
     for (int i = 0; i < NB_IR; i++) {
@@ -341,22 +349,23 @@ void followLineTask(unsigned long currentTime){
 
     normaliserValeurs(); // Je calcule le seuil de chaque capteur 
 
-    if(!ligneVisible()){
-      if(!lost){lost = true; lostBegining = currentTime;}
-
-      if(currentTime - lostBegining >= DELAY_LOST){
-        lost = false;
-        stopEncoders();
-        currentState2 = DEMI_TOUR;
-      }
+    if (!ligneVisible()) {
+      stopEncoders();
+      resetPID();
+      currentState2 = DEMI_TOUR;
+      return;
     }
-    else{
-      lost = false;
+    else {
       float position = calculerPositionLigne();
-      float adjustment = computePID(position, 0.0f);
 
+      if (fabs(position) < 300) {
+        capCentre = gyro.getAngleZ();
+      }
+
+      float adjustment = computePID(position, 0.0f);
       followLine(adjustment);
     }
+
   }
   else{
     currentState2 = NON_CALIB;
@@ -610,7 +619,7 @@ bool spin(double angleDeg, unsigned long currentTime) {
     if (currentTime < settleEnd) return false;
 
     if (fabs(reste) <= PIVOT_TOLERANCE) {
-      headingGoal = gyro.getAngleZ();
+      headingGoal = normalizeAngle(headingGoal + angleDeg);   
       started = false;
       return true;
     }
@@ -926,6 +935,7 @@ void setup() {
 }
 
 void loop() {
+
   unsigned long currentTime = millis();
 
   encodersTask();
