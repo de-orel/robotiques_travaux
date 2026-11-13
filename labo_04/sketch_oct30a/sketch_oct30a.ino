@@ -31,7 +31,7 @@ const double PIVOT_TOLERANCE = 2.0;   // degrés
 const unsigned long PIVOT_SETTLE_MS = 300;   // pause apres un pivot pour stabiliser le gyro
 
 const double KP_AC = 6.0, KD_AC = 25.0;   // segments A et C
-const double KP_B  = 6.0,  KD_B  = 25.0;   // segment B (mon robot oscille avec le meme kp et kd que celui du segment A et C)
+const double KP_B  = 6.0,  KD_B  = 12.0;   // segment B (mon robot oscille avec le meme kp et kd que celui du segment A et C)
 
 // -- leds
 
